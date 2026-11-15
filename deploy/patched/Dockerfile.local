@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1
+#
+# 自建镜像：在容器内完成「前端静态导出 → Go 交叉编译（内嵌 UI/skills）→ 运行镜像」，
+# 生产机只需要 Docker，不必预装 Go/Node。最终运行层与官方 Dockerfile 保持一致。
+#
+# 构建（仓库根目录）：
+#   docker build -f deploy/patched/Dockerfile.local -t antifox:patched .
+#
+# 与官方镜像的唯一差别：engine/llm 的流式请求 Accept 头包含 application/json。
+
+# ① 前端静态导出（构建机平台执行，避免 arm 服务器模拟 Node）
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
+WORKDIR /src/web
+ENV HUSKY=0
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+ENV NEXT_EXPORT=1
+RUN npm run build:static
+
+# ② 交叉编译单二进制（内嵌前端 + skills）
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+ARG TARGETARCH=amd64
+ARG VERSION=patched
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=web /src/web/out /src/server/webui/dist
+RUN mkdir -p server/skillsdist \
+ && cp -r skills/. server/skillsdist/ \
+ && rm -rf server/skillsdist/report-generation \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -tags embedui -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION}" \
+      -o /out/antifox ./cmd/antifox
+
+# ③ 运行镜像（与官方 Dockerfile 相同的工具链）
+FROM python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates ripgrep curl wget vim git jq unzip \
+      dnsutils iputils-ping netcat-openbsd whois nmap \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && npm install -g @playwright/mcp@latest @playwright/cli@latest playwright@latest \
+    && playwright-cli --help \
+    && playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir python-docx
+WORKDIR /app
+COPY --from=build /out/antifox /app/antifox
+RUN chmod +x /app/antifox
+COPY skills/ /app/skills/
+VOLUME ["/app/data"]
+EXPOSE 8787 8788
+ENTRYPOINT ["/app/antifox"]
+CMD ["-addr", ":8787", "-proxy", ":8788"]
