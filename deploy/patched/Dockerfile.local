@@ -49,6 +49,10 @@ RUN apt-get update \
     && playwright-cli --help \
     && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
+# 预装 filesystem MCP：DB 种子用 `npx @modelcontextprotocol/server-filesystem`，
+# 预装后 npx 直接命中全局包，避免容器首次启动联网下载超过 90s 发现超时
+# （日志 "启动自动发现 filesystem 失败: context deadline exceeded"）。
+RUN npm install -g @modelcontextprotocol/server-filesystem@latest
 RUN pip install --no-cache-dir python-docx
 WORKDIR /app
 COPY --from=build /out/antifox /app/antifox
