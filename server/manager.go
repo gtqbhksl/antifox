@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	actool "antifox/engine/tool"
 	"antifox/agent"
 	pgdb "antifox/db"
+	actool "antifox/engine/tool"
 	"antifox/enrich"
 	"antifox/guard"
 	"antifox/intercept"
@@ -58,8 +58,8 @@ type Manager struct {
 	dir         string
 	pg          *pgdb.DB
 	assets      *pgdb.AssetStore
-	traffic     *traffic.Traffic    // process-wide recording proxy (may be nil)
-	enrich      *enrich.Engine      // engine-side asset auto-completion (DNS/HTTP)
+	traffic     *traffic.Traffic       // process-wide recording proxy (may be nil)
+	enrich      *enrich.Engine         // engine-side asset auto-completion (DNS/HTTP)
 	interceptor *intercept.Interceptor // user-configured tool-call interception rules
 
 	mu        sync.RWMutex
@@ -77,19 +77,24 @@ type Manager struct {
 
 // Settings keys the UI toggles at runtime.
 const (
-	settingTrafficCapture   = "traffic_capture"
-	settingWebSearchOn      = "web_search_enabled"
-	settingWebSearchBackend = "web_search_backend"
-	settingBraveKey         = "brave_search_api_key"
-	settingTavilyKey        = "tavily_search_api_key"
-	settingWebSearchProxy   = "web_search_proxy"
-	settingWorkers          = "workers"
-	settingLLMPoolEnabled   = "llm_pool_enabled" // LLM 故障转移(轮询)总开关，默认关
-	settingGlobalProxy      = "global_proxy"     // 全局出口代理(http/https/socks5)：agent 目标流量作 MITM 上游出网；空=直连
+	settingTrafficCapture    = "traffic_capture"
+	settingWebSearchOn       = "web_search_enabled"
+	settingWebSearchBackend  = "web_search_backend"
+	settingBraveKey          = "brave_search_api_key"
+	settingTavilyKey         = "tavily_search_api_key"
+	settingWebSearchProxy    = "web_search_proxy"
+	settingWorkers           = "workers"
+	settingModelErrorRetries = "model_error_retries" // model_error 收场后额外重试次数(0=不重试)
+	settingLLMPoolEnabled    = "llm_pool_enabled"    // LLM 故障转移(轮询)总开关，默认关
+	settingGlobalProxy       = "global_proxy"        // 全局出口代理(http/https/socks5)：agent 目标流量作 MITM 上游出网；空=直连
 	// defaultWebSearchBackend is used when web search is on but no backend was picked.
 	defaultWebSearchBackend = "ddgs"
 	// defaultWorkers is the concurrent work-agent count when the setting is unset.
 	defaultWorkers = 3
+	// defaultModelErrorRetries / maxModelErrorRetries bound the UI-configurable
+	// model_error rerun count.
+	defaultModelErrorRetries = 2
+	maxModelErrorRetries     = 10
 )
 
 // Workers returns the configured concurrent work-agent count (default 3). Read
@@ -112,6 +117,46 @@ func (m *Manager) SetWorkers(n int) error {
 		return fmt.Errorf("workers 必须 >0")
 	}
 	return m.pg.SetSetting(settingWorkers, strconv.Itoa(n))
+}
+
+// ModelErrorRetries returns how many extra times a work intent is re-run after
+// it ended with model_error (LLM provider/API glitch). Read per occurrence, so a
+// UI change applies immediately; 0 disables the extra retries.
+func (m *Manager) ModelErrorRetries() int {
+	v, ok, err := m.pg.GetSetting(settingModelErrorRetries)
+	if err != nil || !ok {
+		return defaultModelErrorRetries
+	}
+	if n, ok := parseModelErrorRetries(v); ok {
+		return n
+	}
+	return defaultModelErrorRetries
+}
+
+// SetModelErrorRetries persists the extra rerun count (0..maxModelErrorRetries).
+func (m *Manager) SetModelErrorRetries(n int) error {
+	if err := validateModelErrorRetries(n); err != nil {
+		return err
+	}
+	return m.pg.SetSetting(settingModelErrorRetries, strconv.Itoa(n))
+}
+
+func parseModelErrorRetries(v string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return 0, false
+	}
+	if err := validateModelErrorRetries(n); err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func validateModelErrorRetries(n int) error {
+	if n < 0 || n > maxModelErrorRetries {
+		return fmt.Errorf("model_error_retries 必须在 0..%d 之间", maxModelErrorRetries)
+	}
+	return nil
 }
 
 // Enrich returns the asset auto-completion engine (may be nil if init failed).

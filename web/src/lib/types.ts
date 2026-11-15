@@ -434,6 +434,7 @@ export interface Settings {
   global_proxy?: string;
   python_interpreter?: string; // 自定义脚本工具的 python 解释器路径(空=运行时检测)
   workers?: number; // 并发工作 agent 数(默认3)；对之后启动的任务生效
+  model_error_retries?: number; // model_error 收场后额外重试次数(默认2,0=不重试,上限10)
 }
 
 // ---- 一键更新 ----

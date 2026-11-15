@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { CpuIcon, RadioTowerIcon, SearchIcon } from "lucide-react";
+import { CpuIcon, RadioTowerIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -35,6 +35,8 @@ export default function SystemSettingsPage() {
   const [pyInterp, setPyInterp] = React.useState("");
   const [workers, setWorkers] = React.useState("3");
   const [savingWorkers, setSavingWorkers] = React.useState(false);
+  const [modelRetries, setModelRetries] = React.useState("2");
+  const [savingModelRetries, setSavingModelRetries] = React.useState(false);
   const [globalProxy, setGlobalProxy] = React.useState("");
   const [savingGlobalProxy, setSavingGlobalProxy] = React.useState(false);
   const [testingGlobalProxy, setTestingGlobalProxy] = React.useState(false);
@@ -49,6 +51,7 @@ export default function SystemSettingsPage() {
     setGlobalProxy(s.global_proxy || "");
     setPyInterp(s.python_interpreter || "");
     setWorkers(String(s.workers ?? 3));
+    setModelRetries(String(s.model_error_retries ?? 2));
   }, []);
 
   const saveGlobalProxy = () => {
@@ -90,6 +93,23 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => toast.error(t("settings.saveFailed", { msg: (e as Error).message })))
       .finally(() => setSavingWorkers(false));
+  };
+
+  const saveModelRetries = () => {
+    const n = Number(modelRetries);
+    if (!Number.isInteger(n) || n < 0 || n > 10) {
+      toast.error(t("settings.modelRetry.errInvalid"));
+      return;
+    }
+    setSavingModelRetries(true);
+    api
+      .setSettings({ model_error_retries: n })
+      .then((s) => {
+        apply(s);
+        toast.success(t("settings.modelRetry.saved"));
+      })
+      .catch((e) => toast.error(t("settings.saveFailed", { msg: (e as Error).message })))
+      .finally(() => setSavingModelRetries(false));
   };
 
   const savePython = () => {
@@ -479,6 +499,35 @@ export default function SystemSettingsPage() {
               onChange={(e) => setWorkers(e.target.value)}
             />
             <Button onClick={saveWorkers} disabled={!loaded || savingWorkers}>
+              {t("common.save")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="max-w-2xl lg:max-w-none">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <RefreshCwIcon className="size-4" />
+            {t("settings.modelRetry.title")}
+          </CardTitle>
+          <CardDescription>
+            <Trans i18nKey="settings.modelRetry.desc" components={{ b: <b /> }} />
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={10}
+              className="w-32 font-mono text-sm"
+              placeholder="2"
+              value={modelRetries}
+              disabled={!loaded || savingModelRetries}
+              onChange={(e) => setModelRetries(e.target.value)}
+            />
+            <Button onClick={saveModelRetries} disabled={!loaded || savingModelRetries}>
               {t("common.save")}
             </Button>
           </div>

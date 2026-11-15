@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"antifox/engine/harness"
-	"antifox/engine/llm"
 	"antifox/agent"
 	"antifox/db"
+	"antifox/engine/harness"
+	"antifox/engine/llm"
 	"antifox/intercept"
 )
 
@@ -20,10 +20,8 @@ import (
 // 收场的 work 不是「试过没做完」也不是真失败，而是外部抖动。默认把它当永久
 // blocked 会白丢一条意图，所以这里对该终态额外重跑几次，每次之间退避一下，给
 // provider 恢复的时间；重试期间若被暂停/终止/取消则立即让位给对应分支处理。
-const (
-	modelErrorRetries      = 2               // model_error 收场后额外重试的次数
-	modelErrorRetryBackoff = 3 * time.Second // 每次重试前的退避
-)
+// 重试次数由系统设置 model_error_retries 控制（默认 2，0=不重试）。
+const modelErrorRetryBackoff = 3 * time.Second // 每次重试前的退避
 
 // Engine drives the event-driven exploration loop with real LLM agents
 // (docs §4.3/§4.4): on asset/exploration-graph change (debounced) it wakes the
@@ -517,11 +515,12 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 		// model_error 收场 → 额外重跑几次（退避后再试）。仅在意图仍属本 work、任务
 		// 未暂停/未终止/未取消【且未进入收尾】时重试；否则让位给对应分支处理(收尾期不
 		// 再重试,避免退避挤占其他 worker 的优雅收尾窗口)。
-		for attempt := 1; attempt <= modelErrorRetries &&
+		modelRetries := e.m.ModelErrorRetries()
+		for attempt := 1; attempt <= modelRetries &&
 			reason == harness.ReasonModelError &&
 			workCtx.Err() == nil && ectx.Err() == nil && !e.IsPaused(t.ID) && !e.isSettling(t.ID); attempt++ {
 			log.Printf("[worker %s] task %s 意图 #%d model_error 收场，%v 后重试 (%d/%d)",
-				name, t.ID, intent.ID, modelErrorRetryBackoff, attempt, modelErrorRetries)
+				name, t.ID, intent.ID, modelErrorRetryBackoff, attempt, modelRetries)
 			if sleepCtx(workCtx, modelErrorRetryBackoff) {
 				break // 退避期间被取消（终止/暂停）→ 交给下方分支处理
 			}
