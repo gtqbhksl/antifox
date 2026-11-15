@@ -1,0 +1,11 @@
+# 叠加在仓库根目录 docker-compose.yml 之上，只替换 antifox 镜像。
+#
+#   docker compose -f docker-compose.yml -f deploy/patched/docker-compose.override.yml up -d
+#
+# 镜像由 fork 的 Actions（.github/workflows/patched-image.yml）构建并推送到
+# ghcr.io/<你的账号>/antifox。项目目录仍取第一个 -f 文件所在目录（仓库根），
+# ./data、./skills 挂载不受影响。
+services:
+  antifox:
+    image: ghcr.io/gtqbhksl/antifox:${ANTIFOX_TAG:-latest}
+    pull_policy: always
