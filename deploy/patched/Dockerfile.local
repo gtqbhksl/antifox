@@ -52,10 +52,18 @@ FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates ripgrep curl wget vim git jq unzip \
       dnsutils iputils-ping netcat-openbsd whois nmap \
-      masscan sqlmap hydra gobuster enum4linux nikto whatweb samba-common-bin \
+      masscan sqlmap hydra gobuster whatweb samba-common-bin smbclient \
+      perl libnet-ssleay-perl ldap-utils \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+# enum4linux / nikto 不在 Debian bookworm 源内：从上游仓库安装 Perl 脚本，
+# 并用包装命令保证脚本按真实路径定位自己的资源目录。
+RUN git clone --depth 1 https://github.com/CiscoCXSecurity/enum4linux /opt/enum4linux \
+ && git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \
+ && printf '#!/bin/sh\nexec perl /opt/enum4linux/enum4linux.pl "$@"\n' > /usr/local/bin/enum4linux \
+ && printf '#!/bin/sh\nexec perl /opt/nikto/program/nikto.pl "$@"\n' > /usr/local/bin/nikto \
+ && chmod +x /usr/local/bin/enum4linux /usr/local/bin/nikto
 RUN apt-get update \
     && npm install -g @playwright/mcp@latest @playwright/cli@latest playwright@latest \
     && playwright-cli --help \

@@ -66,3 +66,13 @@ jobs:
             VERSION=patched-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify preinstalled tools
+        run: |
+          IMG="ghcr.io/${{ github.repository_owner }}/antifox:patched"
+          docker pull "$IMG"
+          docker run --rm --entrypoint sh "$IMG" -c '
+            for b in masscan nmap sqlmap hydra gobuster enum4linux nikto whatweb smbclient npx; do
+              command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
+            done
+            echo "tool check ok"'
