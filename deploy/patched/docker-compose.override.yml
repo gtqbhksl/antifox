@@ -7,5 +7,5 @@
 # ./data、./skills 挂载不受影响。
 services:
   antifox:
-    image: ghcr.io/gtqbhksl/antifox:${ANTIFOX_TAG:-patched}
+    image: ghcr.io/gtqbhksl/antifox:${ANTIFOX_TAG:-latest}
     pull_policy: always

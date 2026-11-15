@@ -27,7 +27,7 @@ fork 里的 `patched-image` 分支带了 `.github/workflows/patched-image.yml`�
 把现有 `docker-compose.yml` 的镜像行改成你的仓库：
 
 ```yaml
-image: ghcr.io/gtqbhksl/antifox:${ANTIFOX_TAG:-patched}
+image: ghcr.io/gtqbhksl/antifox:${ANTIFOX_TAG:-latest}
 ```
 
 或叠加覆盖文件（项目目录仍取第一个 `-f` 文件所在目录，`./data`、`./skills` 不受影响）：
@@ -37,7 +37,9 @@ docker compose -f docker-compose.yml -f deploy/patched/docker-compose.override.y
 docker compose -f docker-compose.yml -f deploy/patched/docker-compose.override.yml up -d
 ```
 
-`.env` 里 `ANTIFOX_TAG=patched` 即可（同时也发布了 `latest`，保持原值也能用）；
+`.env` 里保持 `ANTIFOX_TAG=latest` 即可（本仓库的 latest 指向最近一次 Actions 构建）；
+需要复现某个版本时固定成 `patched-<sha>`。注意 `latest` 跟着本仓库的构建走，
+**不会**因为上游发版自动更新——要跟上游同步需先合并上游代码再触发一次构建。
 不要用上游的版本号 tag，本仓库未发布。
 
 ## 方式 B（备用）：本地构建

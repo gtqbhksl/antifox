@@ -11,12 +11,12 @@ on:
     branches: ["patched-image"]
     paths:
       - "engine/**"
-      - "deploy/patched/**"
       - "web/**"
       - "server/**"
       - "skills/**"
       - "go.mod"
       - "go.sum"
+      - "deploy/patched/Dockerfile.local"
       - ".github/workflows/patched-image.yml"
   workflow_dispatch:
 
