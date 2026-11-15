@@ -18,7 +18,17 @@ COPY web/ ./
 ENV NEXT_EXPORT=1
 # 用 webpack 而非 Turbopack：Next 16.2.9 的 Turbopack 在容器里解析
 # next/font/google 会报 "Can't resolve @vercel/turbopack-next/internal/font/google/font"。
-RUN npx next build --webpack
+# 构建期要从 Google Fonts 拉字体，偶发返回异常会报
+# "TypeError: Cannot read properties of null (reading '1')"；重试即可恢复，
+# 故最多尝试 3 次（每次清掉 .next 半成品）。
+RUN set -eu; \
+    for i in 1 2 3; do \
+      if npx next build --webpack; then exit 0; fi; \
+      echo "frontend build failed (attempt $i/3), retrying in 10s" >&2; \
+      rm -rf .next; \
+      sleep 10; \
+    done; \
+    exit 1
 
 # ② 交叉编译单二进制（内嵌前端 + skills）
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
