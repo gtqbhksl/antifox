@@ -57,6 +57,44 @@ v2.0 聚焦一件事——**把"挖得到"做成"交得出"**。agent 在挖洞�
 
 > 以上界面数据均为本地靶场的合成演示数据。
 
+## 本 fork 说明：修复与自建镜像
+
+本仓库是 [AntiFox-AI/antifox](https://github.com/AntiFox-AI/antifox) 的自托管 fork，默认分支 `selfhost` 已合并两项上游修复，并由 GitHub Actions 构建自用镜像。
+
+### 包含的修复
+
+- **LLM 流式请求 Accept 兼容**（[PR #12](https://github.com/AntiFox-AI/antifox/pull/12)）：`engine/llm` 的流式请求由 `Accept: text/event-stream` 改为 `text/event-stream, application/json`。部分 OpenAI 兼容网关（vLLM 系等）要求 Accept 中必须包含 `application/json`，否则即使 `stream:true` 也返回 `406 Could not satisfy the request Accept header.`。OpenAI Responses provider 同步修正，并带回归测试。
+- **重试等待识别 Retry-After + 抖动**（[PR #13](https://github.com/AntiFox-AI/antifox/pull/13)）：`engine/llm/retry.go` 优先采用服务端 `Retry-After`（支持 delta-seconds 与 HTTP-date，上限 60s），没有该头时使用 equal-jitter 指数退避（base/2 ~ base，0.5s 起、封顶 8s），避免多 agent 同时重试。
+
+### 自建镜像
+
+镜像由 [`.github/workflows/patched-image.yml`](.github/workflows/patched-image.yml) 在 `selfhost` 分支推送时自动构建，推送到 GHCR：
+
+- `ghcr.io/gtqbhksl/antifox:latest`（最近一次构建）
+- `ghcr.io/gtqbhksl/antifox:patched`
+- `ghcr.io/gtqbhksl/antifox:patched-<sha>`
+
+部署时把 compose 的镜像行改为：
+
+```yaml
+image: ghcr.io/gtqbhksl/antifox:${ANTIFOX_TAG:-latest}
+```
+
+```bash
+docker compose pull antifox
+docker compose up -d
+```
+
+构建细节（多阶段构建、webpack + Google Fonts 抓取重试、预装 filesystem MCP 避免首次启动发现超时等）见 [`deploy/patched/README.md`](deploy/patched/README.md)。
+
+### 分支说明
+
+- `main`：与上游保持一致，仅用于同步上游代码。
+- `fix/openai-stream-accept`、`fix/retry-after-jitter`：提给上游的 PR 分支，不要在其上叠加 fork 专用改动。
+- `selfhost`：默认分支，包含两项修复 + 构建文件；日常部署和更新只关注这一条。
+
+跟进上游：把 `origin/main` 合并进 `selfhost` 后推送，Actions 会自动重建并更新 `latest`。
+
 ## 快速开始
 
 依赖 **PostgreSQL**；探索需配置 **LLM**（`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`，也可在 UI 的「LLM 配置」页填）。生成 `.docx` 报告需 `python3` + `python-docx`（Docker 镜像已内置）。
