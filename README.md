@@ -49,6 +49,16 @@ docker compose up -d
 
 构建细节（多阶段构建、webpack + Google Fonts 抓取重试、预装 filesystem MCP 避免首次启动发现超时等）见 [`deploy/patched/README.md`](deploy/patched/README.md)。
 
+### 预装工具
+
+运行镜像在官方工具链之外预装了 skills 中引用的常用工具，减少 agent 任务中的临时安装：
+
+- 扫描 / 枚举：`masscan`、`nmap`、`gobuster`、`enum4linux`、`nikto`、`whatweb`、`smbclient`
+- 利用 / 口令：`sqlmap`、`hydra`
+- 基础环境：`dig`、`ping`、`nc`、`whois`、`curl`、`wget`、`git`、`jq`、Node 20、Playwright + Chromium、python-docx
+
+需要额外工具（nuclei、dalfox、metasploit 等）仍可在任务中自行安装。
+
 ### 分支说明
 
 - `main`：与上游保持一致，仅用于同步上游代码。
