@@ -7,19 +7,19 @@
 
 ## 方式 A（推荐）：GitHub Actions 自动构建
 
-fork 里的 `patched-image` 分支带了 `.github/workflows/patched-image.yml`，
+fork 里的 `selfhost` 分支（已合并两个修复）带了 `.github/workflows/patched-image.yml`，
 推送该分支即触发构建并推送到 GHCR：
 
 - `ghcr.io/gtqbhksl/antifox:latest`
 - `ghcr.io/gtqbhksl/antifox:patched`
 - `ghcr.io/gtqbhksl/antifox:patched-<sha>`
 
-查看进度：仓库 **Actions → patched-image**。首次跑完后去
+查看进度：仓库 **Actions → selfhost-image**。首次跑完后去
 **个人主页 → Packages → antifox → Package settings → Change visibility → Public**，
 服务器拉镜像就不需要登录；不想公开则在服务器上
 `docker login ghcr.io -u gtqbhksl`（PAT 勾 `read:packages`）。
 
-重新构建：向 `patched-image` 分支推一个提交，或在 Actions 里对该工作流
+重新构建：向 `selfhost` 分支推一个提交，或在 Actions 里对该工作流
 「Re-run all jobs」。
 
 ## 部署

@@ -1,14 +1,14 @@
-name: patched-image
+name: selfhost-image
 
 # 在自己的 fork 里构建含 LLM Accept 修复的镜像并推送到 GHCR：
 #   ghcr.io/<owner>/antifox:latest
 #   ghcr.io/<owner>/antifox:patched
 #   ghcr.io/<owner>/antifox:patched-<sha>
 #
-# 只在本分支（patched-image）上生效，不会影响提给上游的 PR 分支。
+# 只在本分支（selfhost）上生效，不会影响提给上游的 PR 分支。
 on:
   push:
-    branches: ["patched-image"]
+    branches: ["selfhost"]
     paths:
       - "engine/**"
       - "web/**"
@@ -25,7 +25,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: patched-image
+  group: selfhost-image
   cancel-in-progress: true
 
 jobs:
