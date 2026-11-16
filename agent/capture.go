@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"iter"
 	"strings"
 
+	"antifox/db"
 	"antifox/engine/agentcore"
 	"antifox/engine/harness"
 	"antifox/engine/llm"
-	"antifox/db"
 )
 
 // captureRun drives one agent turn-to-completion over Session.Prompt and emits a
@@ -31,6 +33,19 @@ func captureRun(ctx context.Context, opts agentcore.Options, input string, emit 
 // multiple prompts on the SAME conversation (e.g. a settlement round that reuses
 // the worker's accumulated context after the main run hit max_turns).
 func captureRunSession(ctx context.Context, s *agentcore.Session, input string, emit func(db.Activity)) (string, harness.TerminalReason, error) {
+	return captureEvents(ctx, s.Prompt(ctx, input), emit)
+}
+
+// captureSettleSession drives a forced wrap-up pass (Session.Settle) on the same
+// conversation and emits its steps like any other run. Used after the hard ctx
+// backstop killed the main run: the terminal reason is `reason` (e.g. timeout),
+// not "completed", and only the non-disabled (write-back) tools are visible.
+func captureSettleSession(ctx context.Context, s *agentcore.Session, input string, disabledTools []string, maxTurns int, reason harness.TerminalReason, emit func(db.Activity)) (string, harness.TerminalReason, error) {
+	return captureEvents(ctx, s.Settle(ctx, input, disabledTools, maxTurns, reason), emit)
+}
+
+// captureEvents is the shared event loop behind captureRunSession/SettleSession.
+func captureEvents(ctx context.Context, seq iter.Seq2[harness.Event, error], emit func(db.Activity)) (string, harness.TerminalReason, error) {
 	var reason harness.TerminalReason
 	rec := func(r db.Activity) {
 		if emit != nil {
@@ -66,11 +81,11 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 
 	var finalText string
 	var rerr error
-	for ev, err := range s.Prompt(ctx, input) {
+	for ev, err := range seq {
 		if err != nil {
 			flush()
-			if ctx.Err() != nil { // ctx cancelled = manual stop, not a failure
-				rec(db.Activity{Kind: "result", Summary: "（已手动停止本次运行）"})
+			if ctx.Err() != nil { // ctx cancelled = manual stop / hard deadline
+				rec(db.Activity{Kind: "result", Summary: ctxStopSummary(ctx.Err())})
 				return finalText, reason, ctx.Err()
 			}
 			rec(db.Activity{Kind: "result", IsError: true, Summary: "执行出错: " + err.Error(), Detail: err.Error()})
@@ -124,10 +139,15 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 				if sum == "" {
 					switch ev.Terminal.Reason {
 					case harness.ReasonAbortedTools, harness.ReasonAbortedStreaming:
-						// interruption (task paused / worker killed / backend restart),
-						// not a real completion — the intent is re-queued (open) or
-						// stopped, so the session icon reflects that, not this run.
+						// interruption (task paused / worker killed / backend restart /
+						// per-run hard deadline), not a real completion — the intent is
+						// re-queued (open), stopped, or force-settled by the caller.
 						sum = "（运行被中断：任务暂停 / 终止 / 重启所致；未完成）"
+						if ev.Terminal.Err != nil && errors.Is(ev.Terminal.Err, context.DeadlineExceeded) {
+							// 单次 run 的硬墙钟兜底先到：主流程中断，调用方会紧接着
+							// 用新 ctx 强制跑一轮收尾写回（见 worker.Execute）。
+							sum = "（单次运行达墙钟硬上限，主流程已中断）"
+						}
 					case harness.ReasonTimeout, harness.ReasonMaxTurns:
 						// budget hit → settlement ran (facts/assets were written back);
 						// only the trailing text summary is missing, not a failure.
@@ -137,7 +157,10 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 					}
 				}
 				u := ev.Terminal.Usage // cumulative token usage for this session
-				rec(db.Activity{Kind: "result", IsError: ev.Terminal.Err != nil,
+				// A per-run hard deadline is a host budget, not an execution failure:
+				// don't paint the interruption row red (the caller force-settles next).
+				isErr := ev.Terminal.Err != nil && !errors.Is(ev.Terminal.Err, context.DeadlineExceeded)
+				rec(db.Activity{Kind: "result", IsError: isErr,
 					Summary: firstLine(sum, 400), Detail: sum,
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
 					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
@@ -149,6 +172,16 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 	}
 	flush() // safety: any unflushed text if the stream ended without KindResult
 	return finalText, reason, rerr
+}
+
+// ctxStopSummary renders the note for a run whose ctx was cancelled: a deadline is
+// the per-run wall-clock backstop (the caller may force a wrap-up right after),
+// anything else is a manual/engine stop.
+func ctxStopSummary(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "（单次运行达墙钟硬上限，主流程已中断）"
+	}
+	return "（已手动停止本次运行）"
 }
 
 // blocksText concatenates the text of a tool-result's content blocks.

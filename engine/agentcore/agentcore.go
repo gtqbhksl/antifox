@@ -393,6 +393,32 @@ type hookFirer interface {
 // final event is KindResult; Session state is updated when the consumer reaches
 // it (FR-07.3).
 func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Event, error] {
+	return s.prompt(ctx, input, nil)
+}
+
+// Settle runs ONE forced wrap-up pass on the existing conversation: the loop
+// starts already in the settlement phase (disabledTools hidden, bounded to
+// maxTurns tool-turns) and finishes with reason as its terminal reason. It exists
+// for the hard wall-clock backstop case — when a run was cut by the ctx deadline
+// before the normal Settlement phase could run, the host still gets a chance to
+// have the agent write back what it found on a FRESH ctx (the old one is dead).
+// input must be the wrap-up instruction.
+func (s *Session) Settle(ctx context.Context, input string, disabledTools []string, maxTurns int, reason harness.TerminalReason) iter.Seq2[harness.Event, error] {
+	if maxTurns <= 0 {
+		maxTurns = 2
+	}
+	return s.prompt(ctx, input, func(in *harness.QueryInput) {
+		in.MaxTurns = 0 // not a normal run: no step budget to hit
+		in.MaxDuration = 0
+		in.Settlement = &harness.Settlement{MaxTurns: maxTurns}
+		in.InitialSettlement = reason
+		in.DisabledTools = append([]string(nil), disabledTools...)
+	})
+}
+
+// prompt is the shared body of Prompt/Settle: append the user turn, build the
+// query input, then optionally let mod override per-call limits (wrap-up mode).
+func (s *Session) prompt(ctx context.Context, input string, mod func(*harness.QueryInput)) iter.Seq2[harness.Event, error] {
 	// Auto-inject memories relevant to this prompt (Phase 4).
 	if s.opts.Memory != nil && s.opts.Memory.AutoInject && s.opts.Memory.Store != nil {
 		max := s.opts.Memory.MaxInject
@@ -470,6 +496,9 @@ func (s *Session) Prompt(ctx context.Context, input string) iter.Seq2[harness.Ev
 		TokenBudget:        s.opts.TokenBudget,
 		EscalateMaxTokens:  s.opts.EscalateMaxTokens,
 		NonStreaming:       s.opts.NonStreaming,
+	}
+	if mod != nil {
+		mod(&in) // per-call overrides (Settle turns the whole pass into wrap-up mode)
 	}
 	if s.writer != nil {
 		in.Recorder = s.writer

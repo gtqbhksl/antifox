@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"antifox/db"
@@ -71,6 +73,12 @@ func (w *Worker) SetRunTimeout(run time.Duration) {
 // ctx deadline sits — a backstop for a hung turn; the soft budget handles the
 // normal case at the turn boundary.
 const settleHardGrace = 90 * time.Second
+
+// hardSettleBudget is the FRESH wall-clock budget for the forced wrap-up pass that
+// runs after the hard ctx backstop already killed the main run (the old run ctx is
+// permanently dead, so write-back needs a new one). Bounded so a hung provider can
+// never hold the intent forever.
+const hardSettleBudget = 3 * time.Minute
 
 // settleWrapUpPrompt is injected by the SDK settlement phase when a worker hits its
 // turn/time budget: stop probing, write back what was found, then end with a
@@ -310,5 +318,30 @@ func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.
 		defer runCancel()
 	}
 	_, reason, err := captureRunSession(runCtx, s, input, emitWrap)
+	// 硬墙钟兜底(软预算+settleHardGrace)先于轮边界软超时触发时，SDK 只能按"流被
+	// 中断"收场，正常的 settlement 阶段根本没机会跑。这里用【一个新的 ctx】在同一
+	// 个会话上强制再跑一轮收尾：隐藏 Bash 等探测工具，只留写回工具，让 agent 把已
+	// 发现但没来得及落库的内容写回并给出总结——不能因为硬超时就白丢这一条意图。
+	// 仅当父 ctx 仍存活(未暂停/未被 kill/引擎未关停)时执行；父 ctx 已死说明这次中
+	// 断另有归属，交给 engine 的对应分支处理。
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		prompt := settle.PromptFor(harness.ReasonTimeout)
+		if strings.TrimSpace(prompt) != "" {
+			emitWrap(db.Activity{Kind: "result",
+				Summary: "单次运行达墙钟上限，强制收尾：把已发现内容写回并总结…"})
+			budget := hardSettleBudget
+			if clamped {
+				// 任务级超时：协调器的 drain grace 只有 90s，收尾要在它硬取消之前
+				// 完成落库，给它留出余量。
+				budget = 80 * time.Second
+			}
+			sctx, scancel := context.WithTimeout(ctx, budget)
+			// 收尾本身再失败(provider 抖动等)也不改变"预算耗尽"的终态：主流程已尽力
+			// 写回，按 timeout 收场让规划者换角度，而不是封死这条方向。
+			_, _, _ = captureSettleSession(sctx, s, prompt, settle.DisabledTools, settle.MaxTurns, harness.ReasonTimeout, emitWrap)
+			scancel()
+		}
+		reason, err = harness.ReasonTimeout, nil
+	}
 	return reason, tsx.Writes(), err
 }

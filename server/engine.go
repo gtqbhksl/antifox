@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -564,15 +565,20 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 			t.Notify()
 			continue
 		}
-		if err != nil {
-			log.Printf("[worker %s] intent %d: %v", name, intent.ID, err)
-		}
 		// terminal分流：撞步数上限 ≠ 完成。max_turns→exhausted（规划者据此知道这个方向
 		// 试过但没真正做完、需换角度，而非当成已覆盖永久跳过）；出错→blocked；正常→done。
+		// 单次运行的硬超时兜底(MaxDuration+settleHardGrace)会以 ctx deadline exceeded
+		// 的形式冒出来，而不是优雅的 ReasonTimeout(后者只在 turn 边界判)——若某个 turn
+		// 卡太久跑过了兜底，SDK 只能按"流被中断"收场。这仍属"试过但没做完"，归
+		// exhausted 让规划者换角度，而不是 blocked 把整条方向焊死。
 		state := "done"
 		switch {
+		case err != nil && errors.Is(err, context.DeadlineExceeded):
+			state = "exhausted"
+			log.Printf("[worker %s] intent %d 运行触达硬超时(exhausted，单次预算+兜底用尽)，写回 %s", name, intent.ID, wrote)
 		case err != nil:
 			state = "blocked"
+			log.Printf("[worker %s] intent %d 出错(blocked): %v", name, intent.ID, err)
 		case reason == harness.ReasonMaxTurns:
 			state = "exhausted"
 			log.Printf("[worker %s] intent %d 撞步数上限(exhausted)，本次写回 %s", name, intent.ID, wrote)

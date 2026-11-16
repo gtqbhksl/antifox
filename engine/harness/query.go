@@ -102,6 +102,17 @@ type QueryInput struct {
 	// findings instead of ending abruptly. The run still finishes with the budget's
 	// reason (ReasonMaxTurns/ReasonTimeout), never ReasonCompleted. Nil = off.
 	Settlement *Settlement
+
+	// InitialSettlement, when non-empty, starts the loop ALREADY in the wrap-up
+	// phase with this terminal reason (never ReasonCompleted). The caller is
+	// responsible for appending the wrap-up instruction as the prompt's user turn;
+	// this just skips the "main run" phase. Used by Session.Settle after a hard
+	// wall-clock backstop cut a run before the normal settlement could run, so the
+	// agent still gets to write back what it found.
+	InitialSettlement TerminalReason
+	// DisabledTools hides these tool schemas from the model for the whole run
+	// (same filtering mechanism as Settlement.DisabledTools). Empty = all shown.
+	DisabledTools []string
 }
 
 // Settlement configures the wrap-up phase that runs when a budget is hit.
@@ -127,6 +138,10 @@ func (s *Settlement) promptFor(reason TerminalReason) string {
 	}
 	return s.Prompt
 }
+
+// PromptFor exposes promptFor to hosts that force a wrap-up pass themselves
+// (Session.Settle) after a hard deadline killed the main run.
+func (s *Settlement) PromptFor(reason TerminalReason) string { return s.promptFor(reason) }
 
 // Compactor is the harness's view of the compaction system (implemented in
 // package compaction). Compaction is non-destructive; the harness sends only
@@ -353,6 +368,16 @@ func (l *loop) run() {
 		if len(l.in.DeferredTools) > 0 {
 			schemas = filterToolSchemas(schemas, l.in.DeferredTools)
 		}
+	}
+	// Forced wrap-up (Session.Settle): start in settling mode so the very first
+	// reply is treated as a settlement turn — no probing, bounded by the wrap-up
+	// turn budget, and finishing with InitialSettlement as the terminal reason.
+	if len(l.in.DisabledTools) > 0 {
+		schemas = filterToolSchemas(schemas, l.in.DisabledTools)
+	}
+	if l.in.InitialSettlement != "" {
+		l.settling = true
+		l.settleReason = l.in.InitialSettlement
 	}
 	l.turnCount = 1 // the first model call is turn 1
 	l.boundaryCount = countBoundaries(l.messages)
