@@ -21,12 +21,13 @@
 
 ## 本 fork 说明：修复与自建镜像
 
-本仓库是 [AntiFox-AI/antifox](https://github.com/AntiFox-AI/antifox) 的自托管 fork，默认分支 `selfhost` 已合并两项上游修复，并由 GitHub Actions 构建自用镜像。
+本仓库是 [AntiFox-AI/antifox](https://github.com/AntiFox-AI/antifox) 的自托管 fork，默认分支 `selfhost` 已合入两项上游修复，并附带一项本地运行时改进，由 GitHub Actions 构建自用镜像。
 
-### 包含的修复
+### 包含的修复与改进
 
 - **LLM 流式请求 Accept 兼容**（[PR #12](https://github.com/AntiFox-AI/antifox/pull/12)）：`engine/llm` 的流式请求由 `Accept: text/event-stream` 改为 `text/event-stream, application/json`。部分 OpenAI 兼容网关（vLLM 系等）要求 Accept 中必须包含 `application/json`，否则即使 `stream:true` 也返回 `406 Could not satisfy the request Accept header.`。OpenAI Responses provider 同步修正，并带回归测试。
 - **重试等待识别 Retry-After + 抖动**（[PR #13](https://github.com/AntiFox-AI/antifox/pull/13)）：`engine/llm/retry.go` 优先采用服务端 `Retry-After`（支持 delta-seconds 与 HTTP-date，上限 60s），没有该头时使用 equal-jitter 指数退避（base/2 ~ base，0.5s 起、封顶 8s），避免多 agent 同时重试。
+- **单次运行硬超时后强制收尾写回**（本 fork 本地改进，未提上游）：worker 单次运行被硬墙钟兜底（`run_seconds` 软预算 + 90s 宽限）切断时，不再直接终止并丢失尚未落库的发现。会用新 ctx 在原会话上强制进入收尾轮：隐藏 Bash 等探测工具，只保留 `record_fact` / `insert_assets` / `report_finding` 等写回工具，把已识别内容落库并输出一句总结；意图终态记为 `exhausted`（试过但未完成，规划者可换角度重试），而不是 `blocked`（把方向永久封死）。收尾自身预算 3 分钟；任务级超时夹逼时为 80s，给收尾时序的 90s drain 留出余量。
 
 ### 自建镜像
 
@@ -67,7 +68,7 @@ docker compose up -d
 
 - `main`：与上游保持一致，仅用于同步上游代码。
 - `fix/openai-stream-accept`、`fix/retry-after-jitter`：提给上游的 PR 分支，不要在其上叠加 fork 专用改动。
-- `selfhost`：默认分支，包含两项修复 + 构建文件；日常部署和更新只关注这一条。
+- `selfhost`：默认分支，包含上述修复/改进 + 构建文件；日常部署和更新只关注这一条。
 
 跟进上游：把 `origin/main` 合并进 `selfhost` 后推送，Actions 会自动重建并更新 `latest`。
 
